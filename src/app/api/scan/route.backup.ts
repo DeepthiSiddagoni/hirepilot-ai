@@ -1,0 +1,333 @@
+import { NextResponse } from "next/server";
+import { sql } from "@/lib/db";
+import { fetchGreenhouseJobs } from "@/lib/collectors/greenhouse";
+import { fetchLeverJobs } from "@/lib/collectors/lever";
+
+export async function POST() {
+  const results: Array<{
+    company: string;
+    sourceType: string;
+    status: string;
+    jobs?: number;
+    error?: string;
+  }> = [];
+
+  try {
+    const sources = await sql`
+      SELECT
+        cs.id,
+        cs.company_id,
+        cs.source_type,
+        cs.source_key,
+        c.name AS company_name
+      FROM company_sources cs
+      JOIN companies c
+        ON c.id = cs.company_id
+      WHERE cs.active = TRUE
+      ORDER BY c.name
+    `;
+
+    let scanned = 0;
+    let successful = 0;
+    let failed = 0;
+    let totalJobsProcessed = 0;
+
+    for (const source of sources) {
+      scanned++;
+
+      const companySourceId = String(source.id);
+      const companyId = String(source.company_id);
+      const companyName = String(source.company_name);
+      const sourceType = String(source.source_type).toLowerCase();
+      const sourceKey = String(source.source_key);
+
+      try {
+        await sql`
+          UPDATE company_sources
+          SET
+            last_scanned_at = NOW(),
+            scan_error = NULL,
+            updated_at = NOW()
+          WHERE id = ${companySourceId}
+        `;
+
+        // =====================================
+        // GREENHOUSE
+        // =====================================
+        if (sourceType === "greenhouse") {
+          const jobs = await fetchGreenhouseJobs(sourceKey);
+
+          let jobSource = await sql`
+            SELECT id
+            FROM job_sources
+            WHERE LOWER(name) = 'greenhouse'
+            LIMIT 1
+          `;
+
+          if (jobSource.length === 0) {
+            jobSource = await sql`
+              INSERT INTO job_sources (
+                name,
+                source_type,
+                base_url,
+                active
+              )
+              VALUES (
+                'Greenhouse',
+                'ATS',
+                'https://boards-api.greenhouse.io',
+                TRUE
+              )
+              RETURNING id
+            `;
+          }
+
+          const jobSourceId = String(jobSource[0].id);
+
+          for (const job of jobs) {
+            const rawData = JSON.stringify(job);
+
+            await sql`
+              INSERT INTO jobs (
+                company_id,
+                source_id,
+                external_job_id,
+                title,
+                description,
+                location,
+                job_url,
+                discovered_at,
+                raw_data
+              )
+              VALUES (
+                ${companyId},
+                ${jobSourceId},
+                ${String(job.id)},
+                ${job.title},
+                ${job.content ?? null},
+                ${job.location?.name ?? null},
+                ${job.absolute_url},
+                NOW(),
+                CAST(${rawData} AS jsonb)
+              )
+              ON CONFLICT (job_url)
+              DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                raw_data = EXCLUDED.raw_data,
+                active = TRUE,
+                updated_at = NOW()
+            `;
+          }
+
+          totalJobsProcessed += jobs.length;
+          successful++;
+
+          await sql`
+            UPDATE company_sources
+            SET
+              last_success_at = NOW(),
+              scan_error = NULL,
+              updated_at = NOW()
+            WHERE id = ${companySourceId}
+          `;
+
+          results.push({
+            company: companyName,
+            sourceType,
+            status: "success",
+            jobs: jobs.length,
+          });
+
+          continue;
+        }
+
+        // =====================================
+        // LEVER
+        // =====================================
+        if (sourceType === "lever") {
+          const jobs = await fetchLeverJobs(sourceKey);
+
+          let jobSource = await sql`
+            SELECT id
+            FROM job_sources
+            WHERE LOWER(name) = 'lever'
+            LIMIT 1
+          `;
+
+          if (jobSource.length === 0) {
+            jobSource = await sql`
+              INSERT INTO job_sources (
+                name,
+                source_type,
+                base_url,
+                active
+              )
+              VALUES (
+                'Lever',
+                'ATS',
+                'https://api.lever.co',
+                TRUE
+              )
+              RETURNING id
+            `;
+          }
+
+          const jobSourceId = String(jobSource[0].id);
+
+          for (const job of jobs) {
+            const rawData = JSON.stringify(job);
+
+            const listText =
+              job.lists
+                ?.map((item) => `${item.text ?? ""}\n${item.content ?? ""}`)
+                .join("\n\n") ?? "";
+
+            const description = [
+              job.descriptionPlain ?? job.description ?? "",
+              listText,
+              job.additionalPlain ?? job.additional ?? "",
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+
+            const jobUrl =
+              job.hostedUrl ??
+              job.applyUrl ??
+              `https://jobs.lever.co/${sourceKey}/${job.id}`;
+
+            const postedAt = job.createdAt
+              ? new Date(job.createdAt).toISOString()
+              : null;
+
+            await sql`
+              INSERT INTO jobs (
+                company_id,
+                source_id,
+                external_job_id,
+                title,
+                description,
+                location,
+                remote_type,
+                employment_type,
+                job_url,
+                salary_min,
+                salary_max,
+                salary_currency,
+                salary_period,
+                posted_at,
+                discovered_at,
+                raw_data
+              )
+              VALUES (
+                ${companyId},
+                ${jobSourceId},
+                ${job.id},
+                ${job.text},
+                ${description || null},
+                ${job.categories?.location ?? null},
+                ${job.workplaceType ?? null},
+                ${job.categories?.commitment ?? null},
+                ${jobUrl},
+                ${job.salaryRange?.min ?? null},
+                ${job.salaryRange?.max ?? null},
+                ${job.salaryRange?.currency ?? null},
+                ${job.salaryRange?.interval ?? null},
+                ${postedAt},
+                NOW(),
+                CAST(${rawData} AS jsonb)
+              )
+              ON CONFLICT (job_url)
+              DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                remote_type = EXCLUDED.remote_type,
+                employment_type = EXCLUDED.employment_type,
+                salary_min = EXCLUDED.salary_min,
+                salary_max = EXCLUDED.salary_max,
+                salary_currency = EXCLUDED.salary_currency,
+                salary_period = EXCLUDED.salary_period,
+                raw_data = EXCLUDED.raw_data,
+                active = TRUE,
+                updated_at = NOW()
+            `;
+          }
+
+          totalJobsProcessed += jobs.length;
+          successful++;
+
+          await sql`
+            UPDATE company_sources
+            SET
+              last_success_at = NOW(),
+              scan_error = NULL,
+              updated_at = NOW()
+            WHERE id = ${companySourceId}
+          `;
+
+          results.push({
+            company: companyName,
+            sourceType,
+            status: "success",
+            jobs: jobs.length,
+          });
+
+          continue;
+        }
+
+        results.push({
+          company: companyName,
+          sourceType,
+          status: "unsupported-yet",
+        });
+      } catch (error) {
+        failed++;
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown scan error";
+
+        await sql`
+          UPDATE company_sources
+          SET
+            scan_error = ${message},
+            updated_at = NOW()
+          WHERE id = ${companySourceId}
+        `;
+
+        results.push({
+          company: companyName,
+          sourceType,
+          status: "failed",
+          error: message,
+        });
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      sourcesFound: sources.length,
+      scanned,
+      successful,
+      failed,
+      totalJobsProcessed,
+      results,
+    });
+  } catch (error) {
+    console.error("Bulk scan error:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Bulk scan failed",
+      },
+      { status: 500 }
+    );
+  }
+}
