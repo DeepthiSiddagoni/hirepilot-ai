@@ -4,8 +4,8 @@ import {
 } from "next/server";
 
 import {
-  analyzeAndSaveSemanticJob,
-} from "@/lib/intelligence/semantic-job-service";
+  analyzeSponsorshipForJob,
+} from "@/lib/intelligence/sponsorship-engine";
 
 export async function POST(
   request: NextRequest
@@ -15,10 +15,9 @@ export async function POST(
       await request.json();
 
     const jobId =
-      typeof body.jobId ===
-        "string"
-        ? body.jobId.trim()
-        : "";
+      String(
+        body.jobId ?? ""
+      ).trim();
 
     if (!jobId) {
       return NextResponse.json(
@@ -34,24 +33,27 @@ export async function POST(
     }
 
     const result =
-      await analyzeAndSaveSemanticJob(
+      await analyzeSponsorshipForJob(
         jobId
       );
 
     return NextResponse.json({
       success: true,
-      saved: true,
       ...result,
     });
   } catch (error) {
+    console.error(
+      "Sponsorship analysis failed:",
+      error
+    );
+
     return NextResponse.json(
       {
         success: false,
-
         error:
           error instanceof Error
             ? error.message
-            : "Semantic analysis failed",
+            : "Unknown sponsorship analysis error",
       },
       {
         status: 500,

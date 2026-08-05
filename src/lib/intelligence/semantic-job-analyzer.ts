@@ -115,7 +115,7 @@ export async function analyzeJobSemantically(args: {
   const roleFamilies = args.knownRoleFamilies.join("\n- ");
 
   const response = await client.responses.parse({
-    model: "gpt-5.6-terra",
+    model: "gpt-5-mini",
 
     reasoning: {
       effort: "low",

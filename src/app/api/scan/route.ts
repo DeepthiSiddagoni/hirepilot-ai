@@ -4,6 +4,7 @@ import { fetchGreenhouseJobs } from "@/lib/collectors/greenhouse";
 import { fetchLeverJobs } from "@/lib/collectors/lever";
 import { fetchVacoJobs } from "@/lib/collectors/vaco";
 import { fetchWorkdayJobs } from "@/lib/collectors/workday";
+import { fetchEightfoldJobs } from "@/lib/collectors/eightfold";
 
 export async function POST(request: Request) {
   const results: Array<{
@@ -461,6 +462,250 @@ WHERE
 
           continue;
         }
+        // =====================================
+        // EIGHTFOLD
+        // Reusable Eightfold / PCSX collector
+        // =====================================
+        if (sourceType === "eightfold") {
+          const rawConfig =
+            source.source_config;
+
+          const sourceConfig:
+            Record<string, unknown> =
+              typeof rawConfig === "string"
+                ? JSON.parse(rawConfig)
+                : rawConfig &&
+                    typeof rawConfig === "object"
+                  ? (
+                      rawConfig as Record<
+                        string,
+                        unknown
+                      >
+                    )
+                  : {};
+
+          const host =
+            typeof sourceConfig.host ===
+            "string"
+              ? sourceConfig.host
+              : "";
+
+          const domain =
+            typeof sourceConfig.domain ===
+            "string"
+              ? sourceConfig.domain
+              : sourceKey;
+
+          const country =
+            typeof sourceConfig.country ===
+            "string"
+              ? sourceConfig.country
+              : undefined;
+
+          const maxJobs =
+            typeof sourceConfig.maxJobs ===
+            "number"
+              ? Math.min(
+                  100,
+                  Math.max(
+                    1,
+                    Math.floor(
+                      sourceConfig.maxJobs
+                    )
+                  )
+                )
+              : 20;
+
+          if (!host || !domain) {
+            throw new Error(
+              `Invalid Eightfold configuration for ${companyName}`
+            );
+          }
+
+          const jobs =
+            await fetchEightfoldJobs({
+              host,
+              domain,
+              country,
+              maxJobs,
+            });
+
+          let jobSource =
+            await sql`
+              SELECT id
+              FROM job_sources
+              WHERE LOWER(name) =
+                'eightfold'
+              LIMIT 1
+            `;
+
+          if (
+            jobSource.length === 0
+          ) {
+            jobSource =
+              await sql`
+                INSERT INTO job_sources (
+                  name,
+                  source_type,
+                  base_url,
+                  active
+                )
+                VALUES (
+                  'Eightfold',
+                  'ATS',
+                  ${`https://${host}`},
+                  TRUE
+                )
+                RETURNING id
+              `;
+          }
+
+          const jobSourceId =
+            String(
+              jobSource[0].id
+            );
+
+          for (const job of jobs) {
+            const rawData =
+              JSON.stringify(
+                job.raw_data
+              );
+
+            const postedAt =
+              job.posted_at
+                ? new Date(
+                    job.posted_at
+                  ).toISOString()
+                : null;
+
+            await sql`
+              INSERT INTO jobs (
+                company_id,
+                source_id,
+                external_job_id,
+                title,
+                description,
+                location,
+                remote_type,
+                employment_type,
+                job_url,
+                posted_at,
+                discovered_at,
+                raw_data
+              )
+              VALUES (
+                ${companyId},
+                ${jobSourceId},
+                ${job.id},
+                ${job.title},
+                ${job.description},
+                ${job.location},
+                ${job.remote_type},
+                ${job.employment_type},
+                ${job.job_url},
+                ${postedAt},
+                NOW(),
+                CAST(
+                  ${rawData}
+                  AS jsonb
+                )
+              )
+
+              ON CONFLICT (job_url)
+
+              DO UPDATE SET
+                title =
+                  EXCLUDED.title,
+
+                description =
+                  EXCLUDED.description,
+
+                location =
+                  EXCLUDED.location,
+
+                remote_type =
+                  EXCLUDED.remote_type,
+
+                employment_type =
+                  EXCLUDED.employment_type,
+
+                posted_at =
+                  EXCLUDED.posted_at,
+
+                raw_data =
+                  EXCLUDED.raw_data,
+
+                active =
+                  TRUE,
+
+                updated_at =
+                  NOW()
+
+              WHERE
+                jobs.title
+                  IS DISTINCT FROM
+                  EXCLUDED.title
+
+                OR jobs.description
+                  IS DISTINCT FROM
+                  EXCLUDED.description
+
+                OR jobs.location
+                  IS DISTINCT FROM
+                  EXCLUDED.location
+
+                OR jobs.remote_type
+                  IS DISTINCT FROM
+                  EXCLUDED.remote_type
+
+                OR jobs.employment_type
+                  IS DISTINCT FROM
+                  EXCLUDED.employment_type
+
+                OR jobs.posted_at
+                  IS DISTINCT FROM
+                  EXCLUDED.posted_at
+
+                OR jobs.raw_data
+                  IS DISTINCT FROM
+                  EXCLUDED.raw_data
+
+                OR jobs.active
+                  IS DISTINCT FROM
+                  TRUE
+            `;
+          }
+
+          totalJobsProcessed +=
+            jobs.length;
+
+          successful++;
+
+          await sql`
+            UPDATE company_sources
+            SET
+              last_success_at =
+                NOW(),
+              scan_error = NULL,
+              updated_at =
+                NOW()
+            WHERE id =
+              ${companySourceId}
+          `;
+
+          results.push({
+            company:
+              companyName,
+            sourceType,
+            status:
+              "success",
+            jobs:
+              jobs.length,
+          });
+
+          continue;
+        }
+
         // =====================================
 // WORKDAY
 // Reusable Workday collector

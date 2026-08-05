@@ -7,6 +7,7 @@ const SUPPORTED_SOURCE_TYPES =
     "lever",
     "workday",
     "vaco",
+    "eightfold",
   ]);
 
 function clean(value: unknown) {
@@ -83,6 +84,67 @@ function buildWorkdayConfig(
     // Safe initial defaults.
     maxJobs: 20,
     pageSize: 20,
+  };
+}
+
+function buildEightfoldConfig(
+  detectedSourceKey: string,
+  countryCode: string
+) {
+  const host =
+    clean(detectedSourceKey)
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .toLowerCase();
+
+  if (!host) {
+    return null;
+  }
+
+  let domain = host;
+
+  const prefixes = [
+    "apply.careers.",
+    "careers.",
+    "jobs.",
+    "www.",
+  ];
+
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const prefix of prefixes) {
+      if (
+        domain.startsWith(prefix)
+      ) {
+        domain =
+          domain.slice(
+            prefix.length
+          );
+
+        changed = true;
+      }
+    }
+  }
+
+  if (
+    !domain ||
+    !domain.includes(".")
+  ) {
+    return null;
+  }
+
+  return {
+    host,
+    domain,
+
+    country:
+      countryCode || undefined,
+
+    // Safe initial ingestion limit.
+    maxJobs: 20,
   };
 }
 
@@ -248,6 +310,44 @@ export async function POST(
         // Use tenant as normal source key.
         sourceKey =
           config.tenant;
+      }
+
+      // ============================
+      // EIGHTFOLD
+      // ============================
+      if (
+        detectedType ===
+        "eightfold"
+      ) {
+        const config =
+          buildEightfoldConfig(
+            detectedKey,
+            countryCode
+          );
+
+        if (!config) {
+          skipped++;
+
+          results.push({
+            company,
+            sourceType:
+              detectedType,
+            confidence,
+            action: "skipped",
+            reason:
+              "Could not safely build Eightfold configuration",
+          });
+
+          continue;
+        }
+
+        sourceConfig =
+          config;
+
+        // Eightfold API uses the company
+        // domain as its stable search key.
+        sourceKey =
+          config.domain;
       }
 
       // ============================
