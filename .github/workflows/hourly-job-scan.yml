@@ -46,6 +46,11 @@ jobs:
           cat /tmp/hirepilot.log
           exit 1
 
+      - name: Import Brooksource contract jobs
+        run: |
+          echo "===== BROOKSOURCE IMPORT ====="
+          node scripts/import-brooksource.mjs
+
       - name: Scan job sources
         run: |
           curl -fsS \
@@ -55,6 +60,15 @@ jobs:
 
           echo "===== SCAN RESULT ====="
           cat /tmp/scan.json
+
+      - name: Analyze newly discovered jobs
+        run: |
+          echo "===== ANALYZE JOBS ====="
+
+          curl --fail --silent --show-error             -X POST             http://127.0.0.1:3000/api/analyze/jobs             -o /tmp/analyze.json
+
+          cat /tmp/analyze.json
+          echo
 
       - name: Verify jobs API
         run: |
