@@ -47,6 +47,8 @@ jobs:
           exit 1
 
       - name: Import Brooksource contract jobs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           echo "===== BROOKSOURCE IMPORT ====="
           node scripts/import-brooksource.mjs
