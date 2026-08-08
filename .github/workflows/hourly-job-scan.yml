@@ -1,20 +1,17 @@
 name: HirePilot Hourly Job Scan
 
 on:
-  schedule:
-    # Runs once every hour.
-    - cron: "7 * * * *"
-
-  # Also lets you run it manually from GitHub Actions.
   workflow_dispatch:
+  schedule:
+    - cron: "7 * * * *"
 
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout HirePilot
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -30,77 +27,45 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          npm run dev > /tmp/hirepilot-next.log 2>&1 &
+          npm run dev > /tmp/hirepilot.log 2>&1 &
           echo $! > /tmp/hirepilot.pid
 
       - name: Wait for HirePilot
         run: |
-          echo "Waiting for Next.js..."
-
           for i in {1..60}; do
-            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/health.json; then
-              echo "HirePilot is ready."
-              cat /tmp/health.json
+            if curl -fsS http://127.0.0.1:3000/api/health; then
+              echo
+              echo "HirePilot is ready"
               exit 0
             fi
 
             sleep 2
           done
 
-          echo "HirePilot did not start."
-          cat /tmp/hirepilot-next.log
+          echo "HirePilot failed to start"
+          cat /tmp/hirepilot.log
           exit 1
 
       - name: Scan job sources
         run: |
-          echo "===== RUNNING HIREPILOT SCAN ====="
-
           curl -fsS \
             -X POST \
             http://127.0.0.1:3000/api/scan \
-            -o /tmp/scan-result.json
+            -o /tmp/scan.json
 
-          cat /tmp/scan-result.json
+          echo "===== SCAN RESULT ====="
+          cat /tmp/scan.json
 
       - name: Verify jobs API
         run: |
-          echo
-          echo "===== VERIFY JOB DATABASE =====
-        run: |
-          echo
-          echo "===== VERIFY JOB DATABASE ====="
-
           curl -fsS \
-            "http://127.0.0.1:3000/api/jobs" \
+            http://127.0.0.1:3000/api/jobs \
             -o /tmp/jobs.json
 
-          node <<'NODE'
-          const fs = require("fs");
+          echo "===== JOB API RESPONSE ====="
+          head -c 2000 /tmp/jobs.json
+          echo
 
-          const data = JSON.parse(
-            fs.readFileSync("/tmp/jobs.json", "utf8")
-          );
-
-          console.log("Success:", data.success);
-
-          console.log(
-            "Total jobs:",
-            data.totalJobs ??
-            data.total ??
-            data.count ??
-            "not exposed"
-          );
-
-          console.log(
-            "Returned:",
-            Array.isArray(data.jobs)
-              ? data.jobs.length
-              : 0
-          );
-NODE
-
-      - name: Show server log on failure
+      - name: Server log on failure
         if: failure()
-        run: |
-          echo "===== NEXT SERVER LOG ====="
-          cat /tmp/hirepilot-next.log || true
+        run: cat /tmp/hirepilot.log || true
