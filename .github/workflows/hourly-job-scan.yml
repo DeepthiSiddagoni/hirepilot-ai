@@ -53,6 +53,13 @@ jobs:
           echo "===== BROOKSOURCE IMPORT ====="
           node scripts/import-brooksource.mjs
 
+      - name: Import Motion Recruitment contract jobs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "===== MOTION RECRUITMENT IMPORT ====="
+          node scripts/import-motion.mjs
+
       - name: Scan job sources
         run: |
           curl -fsS \
