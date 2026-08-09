@@ -1,9 +1,14 @@
-name: HirePilot Hourly Job Scan
+name: HirePilot 5-Minute Job Scan
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7 * * * *"
+    - cron: "*/5 * * * *"
+
+
+concurrency:
+  group: hirepilot-job-scan
+  cancel-in-progress: false
 
 jobs:
   scan:
@@ -69,6 +74,20 @@ jobs:
 
           echo "===== SCAN RESULT ====="
           cat /tmp/scan.json
+
+      - name: Refresh verified C2C apply queue
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "===== C2C WEB DISCOVERY ====="
+          node scripts/c2c-web-hunter.mjs
+
+          echo "===== VERIFY CURRENT C2C JOBS ====="
+          node scripts/verify-c2c-web-jobs.mjs
+
+          echo "===== SYNC C2C QUEUE TO NEON ====="
+          node scripts/sync-c2c-queue-to-db.mjs
 
       - name: Analyze newly discovered jobs
         run: |

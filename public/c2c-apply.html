@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>HirePilot — Today's C2C Apply Queue</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 28px;
+      background: #0f1726;
+      color: #f8fafc;
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 29px;
+    }
+
+    .sub {
+      color: #cbd5e1;
+      margin-bottom: 24px;
+    }
+
+    .status {
+      display: flex;
+      gap: 22px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+      color: #94a3b8;
+      font-size: 13px;
+    }
+
+    .live {
+      color: #34d399;
+      font-weight: 700;
+    }
+
+    .error {
+      color: #f87171;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1100px;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 10px;
+      border-bottom: 1px solid #334155;
+      font-size: 14px;
+    }
+
+    td {
+      padding: 12px 10px;
+      border-bottom: 1px solid #334155;
+      background: #1e293b;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    tr:hover td {
+      background: #263449;
+    }
+
+    .action {
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .fast {
+      color: #34d399;
+    }
+
+    .recruiter {
+      color: #fbbf24;
+    }
+
+    .open-job {
+      display: inline-block;
+      background: #f8fafc;
+      color: #111827;
+      padding: 7px 12px;
+      border-radius: 5px;
+      font-weight: 800;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .open-job:hover {
+      background: #dbeafe;
+    }
+
+    .empty {
+      padding: 35px;
+      text-align: center;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>HirePilot — Today's C2C Apply Queue</h1>
+
+  <div class="sub">
+    Nationwide USA • C2C priority • verified/current opportunities
+  </div>
+
+  <div class="status">
+    <span class="live">● LIVE</span>
+
+    <span>
+      Queue:
+      <strong id="count">Loading…</strong>
+    </span>
+
+    <span>
+      Last checked:
+      <strong id="lastRefresh">—</strong>
+    </span>
+
+    <span>
+      Auto refresh:
+      <strong>every 5 minutes</strong>
+    </span>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Action</th>
+          <th>Role</th>
+          <th>Company</th>
+          <th>Location</th>
+          <th>Min Years</th>
+          <th>C2C</th>
+          <th>Visa</th>
+          <th>Source</th>
+          <th>Apply</th>
+        </tr>
+      </thead>
+
+      <tbody id="jobs">
+        <tr>
+          <td colspan="10" class="empty">
+            Loading latest C2C jobs…
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+<script>
+  const REFRESH_MS = 5 * 60 * 1000;
+
+  function esc(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  async function loadQueue() {
+    const tbody = document.getElementById("jobs");
+    const error = document.getElementById("error");
+
+    try {
+      error.textContent = "";
+
+      const response = await fetch(
+        "/api/c2c-queue?t=" + Date.now(),
+        {
+          cache: "no-store"
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "Queue API returned " + response.status
+        );
+      }
+
+      const data = await response.json();
+
+      const unique = [];
+      const seen = new Set();
+
+      for (const job of data.jobs || []) {
+        const key =
+          job.job_key ||
+          [
+            job.role,
+            job.company,
+            job.location
+          ]
+          .join("|")
+          .toLowerCase();
+
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+        unique.push(job);
+      }
+
+      document.getElementById("count").textContent =
+        unique.length + " jobs";
+
+      document.getElementById("lastRefresh").textContent =
+        new Date().toLocaleTimeString();
+
+      if (!unique.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="10" class="empty">
+              No verified C2C jobs in the latest scan.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = unique.map((job, index) => {
+        const action =
+          job.action || "RECRUITER_FIRST";
+
+        const actionClass =
+          action === "FAST_APPLY"
+            ? "fast"
+            : "recruiter";
+
+        const apply =
+          job.job_url
+            ? `<a
+                 class="open-job"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 href="${esc(job.job_url)}"
+               >
+                 OPEN JOB
+               </a>`
+            : "—";
+
+        return `
+          <tr>
+            <td>${index + 1}</td>
+
+            <td class="action ${actionClass}">
+              ${esc(action)}
+            </td>
+
+            <td>${esc(job.role)}</td>
+            <td>${esc(job.company || "—")}</td>
+            <td>${esc(job.location || "—")}</td>
+            <td>${esc(job.min_years || "—")}</td>
+            <td>${esc(job.c2c || "C2C")}</td>
+            <td>${esc(job.visa || "Ask recruiter")}</td>
+            <td>${esc(job.source || "—")}</td>
+            <td>${apply}</td>
+          </tr>
+        `;
+      }).join("");
+
+    } catch (err) {
+      console.error(err);
+
+      error.textContent =
+        "Could not refresh queue. Retrying automatically.";
+
+      document.getElementById("lastRefresh").textContent =
+        new Date().toLocaleTimeString();
+    }
+  }
+
+  loadQueue();
+
+  setInterval(
+    loadQueue,
+    REFRESH_MS
+  );
+</script>
+
+</body>
+</html>
