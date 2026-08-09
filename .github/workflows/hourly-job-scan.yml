@@ -79,6 +79,7 @@ jobs:
         continue-on-error: true
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "===== C2C WEB DISCOVERY ====="
           node scripts/c2c-web-hunter.mjs
