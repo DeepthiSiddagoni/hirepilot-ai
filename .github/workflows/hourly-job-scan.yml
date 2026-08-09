@@ -79,15 +79,11 @@ jobs:
         continue-on-error: true
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "===== C2C WEB DISCOVERY ====="
-          node scripts/c2c-web-hunter.mjs
+          echo "===== BUILD FREE C2C/W2 QUEUE ====="
+          node scripts/build-c2c-queue-from-db.mjs
 
-          echo "===== VERIFY CURRENT C2C JOBS ====="
-          node scripts/verify-c2c-web-jobs.mjs
-
-          echo "===== SYNC C2C QUEUE TO NEON ====="
+          echo "===== SYNC APPLY QUEUE TO NEON ====="
           node scripts/sync-c2c-queue-to-db.mjs
 
       - name: Analyze newly discovered jobs
